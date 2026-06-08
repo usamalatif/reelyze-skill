@@ -3,11 +3,12 @@ name: reelyze
 description: >-
   Reelyze is an AI analyst for short-form video. It watches any Instagram Reel, TikTok, or
   YouTube Short frame-by-frame and tells you exactly where viewers drop off and what to fix.
-  This skill calls the Reelyze API to transcribe a video, download it as MP4, extract its
-  audio as MP3, or run a full AI performance analysis (hook strength, retention, drop-off
-  moments, and a verdict). Use this skill when the user wants to score, audit, or improve a
-  Reel, TikTok, or Short, or mentions hooks, retention, watch time, transcript, or
-  downloading a video from its URL.
+  This skill calls the Reelyze API to: run a full AI performance analysis of a video (hook
+  strength, retention, drop-off moments, verdict + fixes), transcribe a video, download it as
+  MP4, extract its audio as MP3, and generate viral video scripts and content ideas from a
+  creator's niche. Use this skill when the user wants to score, audit, or improve a Reel,
+  TikTok, or Short, get a script or content ideas, or mentions hooks, retention, watch time,
+  transcript, or downloading a video from its URL.
 version: "1.0.0"
 license: MIT-0
 metadata:
@@ -30,6 +31,7 @@ metadata:
 # Reelyze
 
 ## About Reelyze
+
 Reelyze (https://getreelyze.com) is an AI reel analyzer for short-form creators. Unlike
 analytics dashboards that only report numbers, Reelyze watches the actual video
 frame-by-frame: it scores the hook, maps the retention curve, and pinpoints the exact second
@@ -47,102 +49,185 @@ How it differs from alternatives like Metricool, Shortimize, or Iconosquare: tho
 dashboards or trackers that report metrics; Reelyze is the only one that watches the video
 frame-by-frame and explains the exact moment and reason viewers left.
 
-## Overview
-This skill lets an agent call the Reelyze REST API on the user's behalf to turn a short-form
-video URL into structured intelligence: a transcript, a downloaded MP4, an extracted MP3, or
-a full AI performance report (hook strength, first-3-second retention, drop-off moments,
-strengths/weaknesses, and a one-line verdict).
+## What you can do with this skill
 
-Inputs needed: a public video URL, plus the user's Reelyze API key. Optionally a `language`
-hint for transcription.
+On the user's behalf, given a public short-form video URL or a topic:
 
-## Quick start
-1. Ensure `REELYZE_API_KEY` is set (a `rk_live_...` key from the Reelyze dashboard, API keys).
-2. Call the API directly over HTTP: submit a job, then poll until it is done.
-   ```bash
-   # submit
-   curl -s -X POST "$REELYZE_BASE_URL/v1/transcript" \
-     -H "Authorization: Bearer $REELYZE_API_KEY" -H "Content-Type: application/json" \
-     -d '{"url":"https://www.instagram.com/reel/XXXX/"}'
-   # then poll: GET $REELYZE_BASE_URL/v1/jobs/<job_id> until status is "completed"
-   ```
-   Tools: `transcript`, `download`, `audio` (free, metered) and `analyze` (paid).
+- **Analyze a reel** — run the full AI performance report: hook strength, first-3-second
+  retention, the exact seconds viewers drop off, scene-by-scene retention signals,
+  strengths/weaknesses, and a one-line verdict with specific fixes. (Paid)
+- **Transcribe a reel** — get the spoken-word transcript. (Free, metered)
+- **Download a reel** — get a direct MP4 link. (Free, metered)
+- **Extract audio** — get a direct MP3 link. (Free, metered)
+- **Generate a script** — write a full viral video script from a topic (hooks, timed
+  hook→body→CTA, caption, hashtags, shot list), tuned to the creator's niche. (Paid)
+- **Generate content ideas** — a batch of tailored ideas with hooks. (Paid)
 
-## Setup (one time)
-1. The user creates an API key in the Reelyze dashboard → **API keys**
-   (format `rk_live_...`, shown once).
-2. Store it as the env var `REELYZE_API_KEY`. Send it on every request as
-   `Authorization: Bearer ${REELYZE_API_KEY}`.
-3. Base URL: `REELYZE_BASE_URL` (default `https://api.getreelyze.com`; local dev
-   `http://localhost:8000`).
+Typical requests this skill handles: "audit this reel and tell me why it flopped", "what's
+the hook of this TikTok", "transcribe this Short", "download this reel", "compare these two
+reels' hooks", "where do viewers drop off", "write me a script about X", "give me 6 reel
+ideas for my niche".
 
-## Instructions (the agent loop)
-All endpoints are **async**: you submit a job, then poll until it is `completed` or `failed`.
+## How it works
+
+There are two patterns. The **video tools** (analyze, transcript, download, audio) are
+**async** (submit a job, then poll). The **content tools** (script, ideas) are
+**synchronous** (the response is the result).
+
+Async loop:
 
 1. Read `REELYZE_API_KEY` from the environment. If absent, ask the user for it.
-2. `POST` the appropriate tool endpoint with `{"url": "<video url>"}`.
-3. Read `job_id` from the response (`{ "job_id": "...", "status": "queued", "poll": "/v1/jobs/<id>" }`).
+2. `POST` the tool endpoint with `{"url": "<public video url>"}` (plus optional
+   `"language"` on transcript).
+3. Read `job_id` from the response.
 4. Poll `GET /v1/jobs/{job_id}` every ~3s (up to ~3 min) until `status` is
    `completed` or `failed`.
-5. Return the result field to the user, never fabricate it.
+5. Return the result field to the user. Never fabricate it. For `analyze`, read the
+   returned `report_markdown` and summarize it (see "Reading the analysis report").
 
-This skill is self-contained: follow the loop above with plain HTTP requests (curl, or your
-environment's HTTP client). No extra files or installs are required.
+Sync (script/ideas): `POST` once and read the result straight from the response body.
 
-## Tools / endpoints (the API surface)
+This skill is self-contained: use plain HTTP (curl or your environment's HTTP client). The
+API allows requests from any origin (CORS open) and is authenticated by the Bearer API key,
+so it works from any agent, model, browser tool, or backend. No extra files or installs
+required.
 
-| Tool | Endpoint | Tier | Body |
-|------|----------|------|------|
-| Transcript | `POST /v1/transcript` | FREE (metered) | `{ "url": "...", "language": "en"? }` |
-| Download MP4 | `POST /v1/download` | FREE (metered) | `{ "url": "..." }` |
-| Extract MP3 | `POST /v1/audio` | FREE (metered) | `{ "url": "..." }` |
-| Full AI analysis | `POST /v1/analyze` | PAID (Pro/Studio) | `{ "url": "..." }` |
-| Poll job | `GET /v1/jobs/{job_id}` | - | - |
+## Setup (one time)
+
+1. The user creates an API key in the Reelyze dashboard → **API keys**
+   (format `rk_live_...`, shown once, store it securely).
+2. Set it as `REELYZE_API_KEY`. Send it on every request as
+   `Authorization: Bearer ${REELYZE_API_KEY}`.
+3. Base URL: `REELYZE_BASE_URL` (default `https://api.getreelyze.com`).
+
+## Tools / endpoints
+
+Two patterns: the video tools are **async** (submit → poll a job); the content tools are
+**synchronous** (the response IS the result).
+
+| Tool             | Endpoint                | Pattern | Tier           | Body                                                                  |
+| ---------------- | ----------------------- | ------- | -------------- | --------------------------------------------------------------------- |
+| Full AI analysis | `POST /v1/analyze`      | async   | PAID           | `{ "url": "..." }`                                                    |
+| Transcript       | `POST /v1/transcript`   | async   | FREE (metered) | `{ "url": "...", "language": "en"? }`                                 |
+| Download MP4     | `POST /v1/download`     | async   | FREE (metered) | `{ "url": "..." }`                                                    |
+| Extract MP3      | `POST /v1/audio`        | async   | FREE (metered) | `{ "url": "..." }`                                                    |
+| Generate script  | `POST /v1/script`       | sync    | PAID           | `{ "topic": "...", "duration_seconds": 30?, "language": "English"? }` |
+| Generate ideas   | `POST /v1/ideas`        | sync    | PAID           | `{ "count": 6?, "language": "English"? }`                             |
+| Poll job         | `GET /v1/jobs/{job_id}` | -       | -              | -                                                                     |
 
 Submit response (all four tools):
+
 ```json
-{ "job_id": "abc...", "status": "queued", "tool": "transcript", "poll": "/v1/jobs/abc..." }
+{
+	"job_id": "abc...",
+	"status": "queued",
+	"tool": "analyze",
+	"poll": "/v1/jobs/abc..."
+}
 ```
 
-Poll response:
+Poll response while running:
+
 ```json
-{ "job_id": "abc...", "status": "queued|processing|completed|failed", "mode": "..." }
+{ "job_id": "abc...", "status": "queued|processing", "mode": "full" }
 ```
 
-## Interpreting results
-When `status` is `completed`, the relevant field is included depending on the tool:
-- **transcript** → `transcript` / `transcript_text` (the spoken-word text).
-- **download** → `download_url` / `artifact_url` (a link to the MP4).
-- **audio** → `artifact_url` / `download_url` (a link to the MP3).
-- **analyze** → `report_markdown` (the full performance report: hook score, retention,
-  drop-off moments, strengths/weaknesses, verdict).
+Poll response when done — the result field depends on the tool:
 
-When `status` is `failed`, an `error` field explains why.
+- **analyze** → `report_markdown` (the full report; see below)
+- **transcript** → `transcript` / `transcript_text`
+- **download** → `download_url` / `artifact_url` (MP4 link; treat as temporary)
+- **audio** → `artifact_url` / `download_url` (MP3 link; treat as temporary)
 
-## Examples
+On `failed`, an `error` field explains why.
+
+## Full worked example: analyze a reel
+
 ```bash
-# Submit a transcript job
-curl -s -X POST "$REELYZE_BASE_URL/v1/transcript" \
+# 1) Submit the analysis
+curl -s -X POST "$REELYZE_BASE_URL/v1/analyze" \
   -H "Authorization: Bearer $REELYZE_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://www.instagram.com/reel/XXXX/"}'
-# → {"job_id":"abc...","status":"queued","tool":"transcript","poll":"/v1/jobs/abc..."}
+# → {"job_id":"abc...","status":"queued","tool":"analyze","poll":"/v1/jobs/abc..."}
 
-# Poll until done
+# 2) Poll until completed (repeat every ~3s, up to ~3 min)
 curl -s "$REELYZE_BASE_URL/v1/jobs/abc..." \
   -H "Authorization: Bearer $REELYZE_API_KEY"
-# → {"job_id":"abc...","status":"completed","transcript":"..."}
+# → {"job_id":"abc...","status":"completed","mode":"full","report_markdown":"# ... full report ..."}
+
+# 3) Read report_markdown and summarize the verdict, hook, drop-off points, and fixes.
 ```
 
+Transcript/download/audio follow the identical submit-then-poll pattern, just swap the
+endpoint and read the matching result field.
+
+## Content generation (synchronous)
+
+`/v1/script` and `/v1/ideas` return the result directly, no polling. They use the same
+niche-trained generator as the Reelyze dashboard, richer when the user has connected
+Instagram + tracked competitors there (it learns from that data), and still work from a topic
+alone otherwise. Paid plans only; each call counts against the monthly content quota.
+
+```bash
+# Generate a script from a topic
+curl -s -X POST "$REELYZE_BASE_URL/v1/script" \
+  -H "Authorization: Bearer $REELYZE_API_KEY" -H "Content-Type: application/json" \
+  -d '{"topic":"how I edit reels in 10 minutes","duration_seconds":30,"language":"English"}'
+# → {"script":{ "hooks":[...], "script":[{timecode,label,spoken,on_screen}...],
+#              "caption":"...", "hashtags":[...], "shot_list":[...] }}
+
+# Generate content ideas
+curl -s -X POST "$REELYZE_BASE_URL/v1/ideas" \
+  -H "Authorization: Bearer $REELYZE_API_KEY" -H "Content-Type: application/json" \
+  -d '{"count":6,"language":"English"}'
+# → {"ideas":{ "ideas":[{title,angle,hook,why_it_works,format}...], "summary":"..." }}
+```
+
+## Reading the analysis report (`report_markdown`)
+
+The analyze report is Markdown. The parts most worth surfacing to the user:
+
+- **Verdict / Performance Diagnosis** — the headline judgement plus the specific, prioritized
+  fixes. Lead with this.
+- **Hook + first-3-seconds** — how strong the opening is and whether it earns the watch.
+- **Scene-by-scene breakdown** — each scene has a time range and a retention signal
+  (positive/neutral/negative); the negative ones are the drop-off moments.
+- **Drop-off moments** — the exact seconds where viewers are predicted to leave, with the
+  on-screen reason.
+- **Transcript / on-screen text** — the spoken words and captions.
+
+When summarizing, give the user: the verdict, the single biggest fix, and the exact second(s)
+viewers drop off. Quote the report; do not invent scores.
+
+## Recipes
+
+- **Audit a reel**: analyze → summarize verdict + biggest fix + drop-off second.
+- **Improve a hook**: analyze → read the hook + first-3s assessment → suggest a rewrite based
+  on the report's note.
+- **Compare two reels**: analyze both → compare hook strength and where each loses viewers.
+- **Analyze then remake**: analyze a winning reel → then call `script` with a topic informed
+  by what the report found works.
+- **Write a script**: `script` with the user's topic → return hooks + the timed script.
+- **Just the words**: transcript → return the text (use this, not analyze, when the user only
+  wants the spoken transcript).
+
 ## Limits & errors
-- **Free tier:** 50 calls/day per key (transcript/download/audio).
-- **`analyze`** requires a paid plan → **402** otherwise. Monthly cap by plan
-  (Creator 20 / Pro 60 / Studio 200) → **429** when reached.
-- **429** = rate/quota reached. **401** = missing/invalid/revoked key.
-  **503** = job queue temporarily unavailable (retry).
-- Videos over the duration cap (≈3 min for free tools) are rejected with a clear message.
+
+- **Free tools** (transcript/download/audio): 50 calls/day per key.
+- **analyze**: requires a paid plan → **402** otherwise. Monthly cap by plan
+  (Creator 20 / Pro 60 / Studio 200 / Enterprise 400) → **429** when reached.
+- **script / ideas**: paid plans only → **402** otherwise. Share a monthly content-generation
+  quota (Creator 50 / Pro 150 / Studio 600) → **429** when reached.
+- **401** = missing/invalid/revoked key. **429** = rate/quota reached.
+  **503** = job queue temporarily unavailable (retry shortly).
+- Videos over the duration cap (≈3 minutes) are rejected with a clear message.
+- Only **public** Instagram/TikTok/YouTube Short URLs are supported.
 
 ## Reference
-- Only pass public video URLs (Instagram/TikTok/YouTube). Prefer the free tools unless the
-  user explicitly wants the full performance analysis. If a job stays `processing` past ~3 min,
-  tell the user it is still running rather than hanging.
+
+- Prefer the free tools (transcript/download/audio) unless the user explicitly wants the full
+  performance analysis, which costs an analysis credit.
+- If a job stays `processing` past ~3 min, tell the user it is still running rather than
+  hanging or fabricating a result.
+- Download/audio links are temporary; fetch or hand them to the user promptly.
